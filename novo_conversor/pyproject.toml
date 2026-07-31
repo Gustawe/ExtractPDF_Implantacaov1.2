@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conversor-folhas"
+version = "0.3.0"
+description = "Aplicativo interno para converter folhas de pagamento em PDF para XLSX."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "PySide6-Essentials>=6.10,<6.13",
+    "openpyxl>=3.1,<4",
+    "pdfplumber>=0.11,<0.12",
+    "pypdf>=6,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller>=6.19,<7",
+    "pytest>=8,<9",
+    "pytest-qt>=4.5,<5",
+]
+
+[project.gui-scripts]
+conversor-folhas = "conversor_folhas.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+

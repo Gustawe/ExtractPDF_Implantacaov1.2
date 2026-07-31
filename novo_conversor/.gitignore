@@ -1,0 +1,38 @@
+# Ambientes e caches Python
+.venv/
+.venv-*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Empacotamento e instaladores gerados
+build/
+dist/
+release/
+installer/output/
+*.egg-info/
+*.exe
+*.msi
+
+# Dados locais da aplicação
+logs/
+*.log
+*.sqlite3
+*.db
+
+# Documentos de folha e saídas (podem conter dados sensíveis)
+*.pdf
+*.xlsx
+*.xls
+
+# IDE e sistema operacional
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
