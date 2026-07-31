@@ -22,6 +22,8 @@ def test_minimum_ui_flow_runs_outside_main_thread(qtbot, tmp_path: Path) -> None
     window._conversion_service = ConversionService(FakeEngine())
     qtbot.addWidget(window)
 
+    assert window._drop_area.text() == "↓  Arraste arquivos PDF para esta área"
+
     window._add_paths([pdf])
 
     assert window._queue_model.rowCount() == 1
@@ -36,3 +38,4 @@ def test_minimum_ui_flow_runs_outside_main_thread(qtbot, tmp_path: Path) -> None
     assert item.status == QueueStatus.SUCCEEDED
     assert item.output_path == tmp_path / "folha.xlsx"
     assert window._progress_bar.value() == 100
+    assert window._progress_bar.styleSheet() == "color: #ffffff;"

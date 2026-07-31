@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         input_layout.addStretch()
         root_layout.addLayout(input_layout)
 
-        self._drop_area = QLabel("Arraste arquivos PDF para esta área")
+        self._drop_area = QLabel("↓  Arraste arquivos PDF para esta área")
         self._drop_area.setObjectName("dropArea")
         self._drop_area.setAlignment(Qt.AlignCenter)
         root_layout.addWidget(self._drop_area)
@@ -157,6 +157,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_bar.setTextVisible(True)
+        self._progress_bar.valueChanged.connect(self._update_progress_text_color)
         self._convert_button = QPushButton("Iniciar conversão")
         self._convert_button.setObjectName("primaryButton")
         self._convert_button.clicked.connect(self._start_conversion)
@@ -313,6 +314,11 @@ class MainWindow(QMainWindow):
         percentage = round((completed / total) * 100) if total else 0
         self._progress_bar.setValue(percentage)
         self._progress_label.setText(f"{completed} de {total} concluídos")
+
+    def _update_progress_text_color(self, value: int) -> None:
+        self._progress_bar.setStyleSheet(
+            "color: #ffffff;" if value == self._progress_bar.maximum() else ""
+        )
 
     def _on_conversion_finished(self) -> None:
         self._conversion_running = False
