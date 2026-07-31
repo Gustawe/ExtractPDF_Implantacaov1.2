@@ -20,3 +20,6 @@ def log_directory() -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
+
+def history_database_path() -> Path:
+    return application_data_directory() / "history.sqlite3"

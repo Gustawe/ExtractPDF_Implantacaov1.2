@@ -25,15 +25,22 @@ from conversor_folhas.application.conversion_service import ConversionService
 from conversor_folhas.application.models import QueueItem, QueueStatus
 from conversor_folhas.application.queue_manager import QueueManager
 from conversor_folhas.infrastructure.engine_adapter import PayrollEngineAdapter
+from conversor_folhas.infrastructure.history_repository import (
+    SQLiteHistoryRepository,
+)
 from conversor_folhas.infrastructure.windows_shell import open_file, open_folder
 
 from .conversion_worker import BatchConversionWorker
+from .history_dialog import HistoryDialog
 from .queue_table_model import QueueTableModel
 from .theme import apply_theme
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        history_repository: SQLiteHistoryRepository | None = None,
+    ) -> None:
         super().__init__()
         self.setWindowTitle(f"Conversor de Folhas — Implantação {__version__}")
         self.setMinimumSize(980, 640)
@@ -46,14 +53,22 @@ class MainWindow(QMainWindow):
         self._worker: BatchConversionWorker | None = None
         self._failure_count = 0
         self._warning_count = 0
+        self._history_repository = history_repository
 
         self._queue_manager = QueueManager()
         self._queue_model = QueueTableModel(self._queue_manager)
-        self._conversion_service = ConversionService(PayrollEngineAdapter())
+        self._conversion_service = ConversionService(
+            PayrollEngineAdapter(),
+            history_repository,
+        )
 
         self._build_interface()
         self._restore_theme()
         self._refresh_actions()
+
+    def set_startup_message(self, message: str) -> None:
+        """Exibe um aviso de inicialização sem expor detalhes da interface."""
+        self._set_message(message)
 
     def _build_interface(self) -> None:
         central_widget = QWidget(self)
@@ -69,10 +84,16 @@ class MainWindow(QMainWindow):
         self._theme_button = QPushButton("Modo escuro")
         self._theme_button.setCheckable(True)
         self._theme_button.clicked.connect(self._toggle_theme)
+        self._history_button = QPushButton("Histórico")
+        self._history_button.clicked.connect(self._open_history)
+        if self._history_repository is None:
+            self._history_button.setEnabled(False)
+            self._history_button.setToolTip("Histórico local indisponível.")
         header_layout.addWidget(app_name)
         header_layout.addStretch()
         header_layout.addWidget(self._version_label)
         header_layout.addSpacing(12)
+        header_layout.addWidget(self._history_button)
         header_layout.addWidget(self._theme_button)
         root_layout.addLayout(header_layout)
 
@@ -150,6 +171,11 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self._message_label)
 
         self.setCentralWidget(central_widget)
+
+    def _open_history(self) -> None:
+        if self._history_repository is None or self._conversion_running:
+            return
+        HistoryDialog(self._history_repository, self).exec()
 
     def _choose_files(self) -> None:
         if self._dialog_open or self._conversion_running:
@@ -376,6 +402,9 @@ class MainWindow(QMainWindow):
         )
         self._open_folder_button.setEnabled(selected is not None)
         self._convert_button.setEnabled(has_pending and not self._conversion_running)
+        self._history_button.setEnabled(
+            self._history_repository is not None and not self._conversion_running
+        )
         if not has_items:
             self._progress_label.setText("Nenhum arquivo na fila")
             if not self._conversion_running:

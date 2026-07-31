@@ -6,7 +6,7 @@ projeto.
 
 ## Estado atual
 
-A versão `0.3.0` contém o primeiro fluxo executável:
+A versão `0.4.0` contém o fluxo funcional e distribuível:
 
 - Seleção individual de vários PDFs.
 - Seleção de uma pasta, sem percorrer subpastas.
@@ -17,11 +17,17 @@ A versão `0.3.0` contém o primeiro fluxo executável:
 - Saída na mesma pasta do PDF.
 - Renomeação automática sem sobrescrever XLSX existentes.
 - Abertura do XLSX ou da pasta de destino.
+- Histórico local em SQLite, carregado somente quando o usuário o abre.
+- Consulta, limpeza e abertura de resultados pelo histórico.
 - Tema claro e escuro.
 - Logs rotativos em `%LOCALAPPDATA%\ConversorFolhas\logs`.
+- Empacotamento em pasta para inicialização mais rápida.
+- Instalador gráfico por usuário, sem exigir permissão de administrador.
 
-Histórico local e empacotamento com instalador serão implementados nas próximas
-etapas.
+O banco de histórico fica em
+`%LOCALAPPDATA%\ConversorFolhas\history.sqlite3`. Não há consulta periódica:
+ele é gravado ao fim de uma conversão e lido quando a tela **Histórico** é
+aberta.
 
 ## Arquitetura
 
@@ -73,3 +79,24 @@ $env:FOLHA_SAMPLE_PDF = "C:\caminho\folha-estruturada.pdf"
 
 PDFs, XLSX, ambientes virtuais, logs e artefatos de build estão excluídos do Git.
 
+## Gerar o aplicativo e o instalador
+
+Pré-requisito adicional na máquina de build: Inno Setup 6.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
+```
+
+O script executa os testes, gera o ícone, cria o aplicativo em modo `onedir` e
+compila o instalador. Os artefatos ficam em:
+
+```text
+dist\ConversorFolhas\
+installer\output\Conversor-de-Folhas-Setup-<versão>.exe
+```
+
+Para validar somente o empacotamento, sem criar instalador:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -SkipInstaller
+```

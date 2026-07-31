@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from uuid import uuid4
@@ -47,3 +48,21 @@ class ConversionResult:
     def has_warning(self) -> bool:
         return self.engine_status not in {"", "APROVADO"}
 
+
+@dataclass(frozen=True, slots=True)
+class HistoryEntry:
+    source_path: Path
+    output_path: Path | None
+    status: str
+    message: str
+    completed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryRecord:
+    identifier: int
+    source_path: Path
+    output_path: Path | None
+    status: str
+    message: str
+    completed_at: datetime

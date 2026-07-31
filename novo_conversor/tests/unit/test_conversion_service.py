@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from conversor_folhas.application.conversion_service import ConversionService
+from conversor_folhas.application.models import HistoryEntry
 
 
 class SuccessfulEngine:
@@ -17,6 +18,19 @@ class FailingEngine:
     def convert(self, source_path: Path, output_path: Path) -> tuple[str, str]:
         output_path.write_bytes(b"incompleto")
         raise ValueError("layout não reconhecido")
+
+
+class CollectingHistory:
+    def __init__(self) -> None:
+        self.entries: list[HistoryEntry] = []
+
+    def record(self, entry: HistoryEntry) -> None:
+        self.entries.append(entry)
+
+
+class BrokenHistory:
+    def record(self, entry: HistoryEntry) -> None:
+        raise OSError("banco indisponível")
 
 
 def test_conversion_is_saved_beside_pdf(tmp_path: Path) -> None:
@@ -65,3 +79,30 @@ def test_non_pdf_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="não é um PDF"):
         service.convert(text_file)
 
+
+def test_success_and_failure_are_recorded_in_history(tmp_path: Path) -> None:
+    successful_pdf = tmp_path / "sucesso.pdf"
+    failed_pdf = tmp_path / "falha.pdf"
+    successful_pdf.write_bytes(b"%PDF-1.4")
+    failed_pdf.write_bytes(b"%PDF-1.4")
+    history = CollectingHistory()
+
+    ConversionService(SuccessfulEngine(), history).convert(successful_pdf)
+    with pytest.raises(ValueError):
+        ConversionService(FailingEngine(), history).convert(failed_pdf)
+
+    assert len(history.entries) == 2
+    assert history.entries[0].status == "APROVADO"
+    assert history.entries[0].output_path == tmp_path / "sucesso.xlsx"
+    assert history.entries[1].status == "ERRO"
+    assert history.entries[1].output_path is None
+    assert "layout não reconhecido" in history.entries[1].message
+
+
+def test_history_failure_does_not_invalidate_conversion(tmp_path: Path) -> None:
+    pdf = tmp_path / "folha.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    result = ConversionService(SuccessfulEngine(), BrokenHistory()).convert(pdf)
+
+    assert result.output_path.is_file()
