@@ -30,7 +30,9 @@ def main() -> int:
 
     configure_logging(log_directory(), diagnostic=False)
     application = QApplication(sys.argv)
-    application.setApplicationDisplayName("Conversor de Folhas — Implantação")
+    application.setApplicationDisplayName(
+        f"Conversor de Folhas — Implantação {__version__}"
+    )
     icon_path = _application_icon_path()
     if icon_path.is_file():
         application.setWindowIcon(QIcon(str(icon_path)))
