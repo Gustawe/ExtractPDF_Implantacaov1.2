@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -22,13 +23,16 @@ from conversor_folhas.infrastructure.history_repository import (
 )
 from conversor_folhas.infrastructure.windows_shell import open_file, open_folder
 
+from .result_details_dialog import ResultDetailsDialog
+
 
 class HistoryTableModel(QAbstractTableModel):
     HEADERS = ("Data e hora", "Arquivo", "Estado", "Resultado")
     STATUS_LABELS = {
         "APROVADO": "Concluído",
-        "APROVADO COM AVISOS": "Com alertas",
-        "REPROVADO": "Com alertas",
+        "APROVADO COM AVISOS": "Concluído com avisos",
+        "APROVADO COM DIVERGÊNCIAS": "Concluído com divergências",
+        "REPROVADO": "Concluído com divergências",
         "ERRO": "Erro",
     }
 
@@ -62,6 +66,10 @@ class HistoryTableModel(QAbstractTableModel):
             return self._tooltip(record, index.column())
         if role == Qt.TextAlignmentRole and index.column() == 2:
             return int(Qt.AlignCenter)
+        if role == Qt.BackgroundRole and index.column() == 2:
+            return self._status_color(record.status)
+        if role == Qt.ForegroundRole and index.column() == 2:
+            return self._status_text_color(record.status)
         return None
 
     def replace(self, records: tuple[HistoryRecord, ...]) -> None:
@@ -87,11 +95,48 @@ class HistoryTableModel(QAbstractTableModel):
     def _tooltip(record: HistoryRecord, column: int) -> str:
         if column == 1:
             return str(record.source_path)
-        if column == 2 and record.message:
-            return record.message
+        if column == 2:
+            description = HistoryTableModel._status_description(record.status)
+            return f"{description}\n{record.message}" if record.message else description
         if column == 3 and record.output_path:
             return str(record.output_path)
         return ""
+
+    @staticmethod
+    def _status_color(status: str) -> QColor | None:
+        colors = {
+            "APROVADO": QColor("#e2f0d9"),
+            "APROVADO COM AVISOS": QColor("#fff2cc"),
+            "APROVADO COM DIVERGÊNCIAS": QColor("#fce4d6"),
+            "REPROVADO": QColor("#fce4d6"),
+            "ERRO": QColor("#f4cccc"),
+        }
+        return colors.get(status)
+
+    @staticmethod
+    def _status_text_color(status: str) -> QColor | None:
+        if status in {
+            "APROVADO",
+            "APROVADO COM AVISOS",
+            "APROVADO COM DIVERGÊNCIAS",
+            "REPROVADO",
+            "ERRO",
+        }:
+            return QColor("#202124")
+        return None
+
+    @staticmethod
+    def _status_description(status: str) -> str:
+        descriptions = {
+            "APROVADO": "XLSX gerado sem pendências.",
+            "APROVADO COM AVISOS": "XLSX gerado com avisos que podem exigir revisão.",
+            "APROVADO COM DIVERGÊNCIAS": (
+                "XLSX gerado com divergências de valor para conferência."
+            ),
+            "REPROVADO": "Registro legado com pendências de validação.",
+            "ERRO": "Não foi possível concluir uma conversão válida.",
+        }
+        return descriptions.get(status, status)
 
 
 class HistoryDialog(QDialog):
@@ -196,7 +241,10 @@ class HistoryDialog(QDialog):
 
     def _refresh_actions(self, *_args: object) -> None:
         record = self._selected_record()
-        self._details_button.setEnabled(record is not None and bool(record.message))
+        self._details_button.setEnabled(
+            record is not None
+            and bool(record.message or record.details.has_details)
+        )
         self._open_result_button.setEnabled(
             record is not None
             and record.output_path is not None
@@ -211,18 +259,19 @@ class HistoryDialog(QDialog):
             return
         if record.output_path and record.output_path.is_file():
             self._open_result()
-        elif record.message:
+        elif record.message or record.details.has_details:
             self._show_details()
 
     def _show_details(self) -> None:
         record = self._selected_record()
-        if record is None or not record.message:
+        if record is None or not (record.message or record.details.has_details):
             return
-        QMessageBox.information(
-            self,
-            f"Detalhes — {record.source_path.name}",
+        ResultDetailsDialog(
+            record.source_path.name,
+            record.details,
             record.message,
-        )
+            self,
+        ).exec()
 
     def _open_result(self) -> None:
         record = self._selected_record()

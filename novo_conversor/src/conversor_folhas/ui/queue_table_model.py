@@ -5,12 +5,15 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtGui import QColor
 
 from conversor_folhas.application.models import (
     QueueAddResult,
     QueueItem,
     QueueStatus,
+    queue_status_from_engine,
 )
+from folha_pdf_xlsx.models import ConversionDetails
 from conversor_folhas.application.queue_manager import QueueManager
 
 
@@ -48,6 +51,10 @@ class QueueTableModel(QAbstractTableModel):
             return self._tooltip(item, index.column())
         if role == Qt.TextAlignmentRole and index.column() == 2:
             return int(Qt.AlignCenter)
+        if role == Qt.BackgroundRole and index.column() == 2:
+            return self._status_color(item.status)
+        if role == Qt.ForegroundRole and index.column() == 2:
+            return self._status_text_color(item.status)
         return None
 
     def add_paths(self, paths: Iterable[str | Path]) -> QueueAddResult:
@@ -78,6 +85,7 @@ class QueueTableModel(QAbstractTableModel):
         removable = {
             QueueStatus.SUCCEEDED,
             QueueStatus.WARNING,
+            QueueStatus.DIVERGENCE,
             QueueStatus.FAILED,
         }
         rows = [
@@ -92,20 +100,43 @@ class QueueTableModel(QAbstractTableModel):
         return items[row] if 0 <= row < len(items) else None
 
     def set_processing(self, identifier: str) -> None:
-        self._update_item(identifier, QueueStatus.PROCESSING, None, "")
+        self._update_item(
+            identifier, QueueStatus.PROCESSING, None, "", ConversionDetails()
+        )
 
     def set_succeeded(
         self,
         identifier: str,
         output_path: str | Path,
-        warning: bool,
+        engine_status: str | bool,
         message: str,
+        details: ConversionDetails | None = None,
     ) -> None:
-        status = QueueStatus.WARNING if warning else QueueStatus.SUCCEEDED
-        self._update_item(identifier, status, Path(output_path), message)
+        if isinstance(engine_status, bool):
+            status = QueueStatus.WARNING if engine_status else QueueStatus.SUCCEEDED
+        else:
+            status = queue_status_from_engine(engine_status)
+        self._update_item(
+            identifier,
+            status,
+            Path(output_path),
+            message,
+            details or ConversionDetails(),
+        )
 
-    def set_failed(self, identifier: str, message: str) -> None:
-        self._update_item(identifier, QueueStatus.FAILED, None, message)
+    def set_failed(
+        self,
+        identifier: str,
+        message: str,
+        details: ConversionDetails | None = None,
+    ) -> None:
+        self._update_item(
+            identifier,
+            QueueStatus.FAILED,
+            None,
+            message,
+            details or ConversionDetails(),
+        )
 
     def _update_item(
         self,
@@ -113,6 +144,7 @@ class QueueTableModel(QAbstractTableModel):
         status: QueueStatus,
         output_path: Path | None,
         message: str,
+        details: ConversionDetails,
     ) -> None:
         item = self._manager.find(identifier)
         if item is None:
@@ -120,6 +152,7 @@ class QueueTableModel(QAbstractTableModel):
         item.status = status
         item.output_path = output_path
         item.message = message
+        item.details = details
         row = self._manager.items.index(item)
         self.dataChanged.emit(self.index(row, 0), self.index(row, 3))
 
@@ -142,6 +175,40 @@ class QueueTableModel(QAbstractTableModel):
         if column == 3 and item.output_path:
             return str(item.output_path)
         if column == 2 and item.message:
-            return item.message
+            return f"{QueueTableModel._status_description(item.status)}\n{item.message}"
+        if column == 2:
+            return QueueTableModel._status_description(item.status)
         return ""
 
+    @staticmethod
+    def _status_description(status: QueueStatus) -> str:
+        descriptions = {
+            QueueStatus.WAITING: "Arquivo aguardando o início da conversão.",
+            QueueStatus.PROCESSING: "Conversão em andamento.",
+            QueueStatus.SUCCEEDED: "XLSX gerado sem pendências.",
+            QueueStatus.WARNING: "XLSX gerado com avisos que podem exigir revisão.",
+            QueueStatus.DIVERGENCE: "XLSX gerado com divergências de valor para conferência.",
+            QueueStatus.FAILED: "Não foi possível concluir uma conversão válida.",
+        }
+        return descriptions[status]
+
+    @staticmethod
+    def _status_color(status: QueueStatus) -> QColor | None:
+        colors = {
+            QueueStatus.SUCCEEDED: QColor("#e2f0d9"),
+            QueueStatus.WARNING: QColor("#fff2cc"),
+            QueueStatus.DIVERGENCE: QColor("#fce4d6"),
+            QueueStatus.FAILED: QColor("#f4cccc"),
+        }
+        return colors.get(status)
+
+    @staticmethod
+    def _status_text_color(status: QueueStatus) -> QColor | None:
+        if status in {
+            QueueStatus.SUCCEEDED,
+            QueueStatus.WARNING,
+            QueueStatus.DIVERGENCE,
+            QueueStatus.FAILED,
+        }:
+            return QColor("#202124")
+        return None

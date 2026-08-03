@@ -6,7 +6,7 @@ projeto.
 
 ## Estado atual
 
-A versão `0.4.0` contém o fluxo funcional e distribuível:
+A versão `0.5.1` contém o fluxo funcional e distribuível:
 
 - Seleção individual de vários PDFs.
 - Seleção de uma pasta, sem percorrer subpastas.
@@ -19,6 +19,12 @@ A versão `0.4.0` contém o fluxo funcional e distribuível:
 - Abertura do XLSX ou da pasta de destino.
 - Histórico local em SQLite, carregado somente quando o usuário o abre.
 - Consulta, limpeza e abertura de resultados pelo histórico.
+- Detalhes estruturados de validações e ocorrências, com filtros e busca.
+- Estados distintos para avisos, divergências e erros.
+- Abas de auditoria e destaque das células divergentes no XLSX.
+- Tratamento auditável de validações não aplicáveis em folhas de 13º reconhecidas.
+- Reconhecimento de resumos fiscais de 13º mesmo sem a seção opcional de apuração federal.
+- Contraste legível dos estados da fila e do histórico nos temas claro e escuro.
 - Tema claro e escuro.
 - Logs rotativos em `%LOCALAPPDATA%\ConversorFolhas\logs`.
 - Empacotamento em pasta para inicialização mais rápida.

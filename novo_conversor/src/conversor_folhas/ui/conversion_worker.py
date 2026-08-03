@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from conversor_folhas.application.conversion_service import ConversionService
 from conversor_folhas.application.models import ConversionRequest
+from folha_pdf_xlsx.models import ConversionDetails
 
 
 LOGGER = logging.getLogger(__name__)
@@ -13,8 +14,8 @@ LOGGER = logging.getLogger(__name__)
 
 class BatchConversionWorker(QObject):
     item_started = Signal(str)
-    item_succeeded = Signal(str, str, bool, str)
-    item_failed = Signal(str, str)
+    item_succeeded = Signal(str, str, str, str, object)
+    item_failed = Signal(str, str, object)
     progress_changed = Signal(int, int)
     finished = Signal()
 
@@ -38,14 +39,15 @@ class BatchConversionWorker(QObject):
                 self.item_succeeded.emit(
                     request.identifier,
                     str(result.output_path),
-                    result.has_warning,
+                    result.engine_status,
                     result.message,
+                    result.details,
                 )
             except Exception as error:
                 LOGGER.exception("Falha no worker para %s", request.source_path)
                 message = f"{type(error).__name__}: {error}"
-                self.item_failed.emit(request.identifier, message)
+                details = getattr(error, "details", ConversionDetails())
+                self.item_failed.emit(request.identifier, message, details)
             completed += 1
             self.progress_changed.emit(completed, total)
         self.finished.emit()
-

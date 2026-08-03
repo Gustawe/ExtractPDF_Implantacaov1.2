@@ -25,10 +25,10 @@ def test_layout_document_uses_approved_visual_writer(tmp_path: Path) -> None:
             "conversor_folhas.infrastructure.engine_adapter.write_workbook"
         ) as structured_writer,
     ):
-        status, message = adapter.convert(source, output)
+        status, message, details = adapter.convert(source, output)
 
     visual_writer.assert_called_once_with(document, output)
     structured_writer.assert_not_called()
     assert status == "APROVADO"
     assert message == ""
-
+    assert not details.has_details

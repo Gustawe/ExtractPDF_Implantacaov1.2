@@ -6,6 +6,8 @@ import pytest
 
 from conversor_folhas.application.conversion_service import ConversionService
 from conversor_folhas.application.models import HistoryEntry
+from conversor_folhas.application.conversion_service import ConversionFailedError
+from folha_pdf_xlsx.models import ConversionDetails, ProcessingIssue
 
 
 class SuccessfulEngine:
@@ -18,6 +20,22 @@ class FailingEngine:
     def convert(self, source_path: Path, output_path: Path) -> tuple[str, str]:
         output_path.write_bytes(b"incompleto")
         raise ValueError("layout não reconhecido")
+
+
+class InvalidResultEngine:
+    def convert(self, source_path: Path, output_path: Path):
+        output_path.write_bytes(b"xlsx-invalido")
+        details = ConversionDetails(
+            issues=[
+                ProcessingIssue(
+                    source_file=source_path.name,
+                    severity="ERRO",
+                    code="SEM_FUNCIONARIOS",
+                    message="Nenhum funcionário reconhecido.",
+                )
+            ]
+        )
+        return "ERRO", "1 erro(s)", details
 
 
 class CollectingHistory:
@@ -106,3 +124,19 @@ def test_history_failure_does_not_invalidate_conversion(tmp_path: Path) -> None:
     result = ConversionService(SuccessfulEngine(), BrokenHistory()).convert(pdf)
 
     assert result.output_path.is_file()
+
+
+def test_engine_error_is_not_published_and_keeps_structured_history(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "folha.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    history = CollectingHistory()
+
+    with pytest.raises(ConversionFailedError, match="1 erro"):
+        ConversionService(InvalidResultEngine(), history).convert(pdf)
+
+    assert not (tmp_path / "folha.xlsx").exists()
+    assert not list(tmp_path.glob(".*.temporario.xlsx"))
+    assert history.entries[0].status == "ERRO"
+    assert history.entries[0].details.error_count == 1

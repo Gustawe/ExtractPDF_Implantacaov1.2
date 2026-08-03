@@ -13,6 +13,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from .audit_writer import write_audit_sheets
 from .layout_models import LayoutLine, LayoutWord, PayrollLayoutDocument
 from .models import EmployeeRecord, PayrollDocument, PayrollEvent, RubricSummary
 from .parsing import parse_br_date, parse_br_decimal
@@ -76,6 +77,7 @@ def write_layout_workbook(
     sheet.auto_filter.ref = f"A1:N{max(row - 1, 1)}"
     sheet.print_area = f"A1:N{max(row - 1, 1)}"
     sheet.sheet_properties.pageSetUpPr.autoPageBreaks = False
+    write_audit_sheets(workbook, document.details)
     workbook.save(output)
     _verify(output, document)
     return output
@@ -133,6 +135,7 @@ def _write_structured_layout_workbook(
         for employee in employees:
             start = row
             row = _write_structured_employee(sheet, row, employee)
+            _map_employee_validation_cells(document, employee, row - 1)
             _style_employee_block(sheet, start, row - 1)
             sheet.row_dimensions.group(start, row - 1, outline_level=1, hidden=False)
             row += 1
@@ -141,6 +144,7 @@ def _write_structured_layout_workbook(
     sheet.auto_filter.ref = f"A1:N{max(row - 1, 1)}"
     sheet.print_area = f"A1:N{max(row - 1, 1)}"
     sheet.sheet_properties.pageSetUpPr.autoPageBreaks = False
+    write_audit_sheets(workbook, document.details)
     workbook.save(output)
     _verify(output, document)
     return output
@@ -308,6 +312,24 @@ def _write_structured_employee(
     ]
     _write_row(sheet, row, totals, "total")
     return row + 1
+
+
+def _map_employee_validation_cells(
+    document: PayrollDocument,
+    employee: EmployeeRecord,
+    totals_row: int,
+) -> None:
+    target_columns = {
+        "Soma de proventos": "E",
+        "Soma de descontos": "I",
+        "Cálculo do líquido": "M",
+    }
+    for check in document.validations:
+        if check.record_key != employee.employee_key:
+            continue
+        column = target_columns.get(check.check)
+        if column:
+            check.target_cell = f"Folha!{column}{totals_row}"
 
 
 def _structured_event_row(
@@ -632,8 +654,8 @@ def _verify(
     document: PayrollLayoutDocument | PayrollDocument,
 ) -> None:
     workbook = load_workbook(path, read_only=False, data_only=False)
-    if workbook.sheetnames != ["Folha"]:
-        raise ValueError("A exportação visual deve conter somente a aba 'Folha'.")
+    if not workbook.sheetnames or workbook.sheetnames[0] != "Folha":
+        raise ValueError("A exportação visual deve manter 'Folha' como aba principal.")
     sheet = workbook["Folha"]
     found = sum(
         1 for row in sheet.iter_rows() if row[0].value == "Cód:"

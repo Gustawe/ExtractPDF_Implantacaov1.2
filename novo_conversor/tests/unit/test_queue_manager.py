@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from conversor_folhas.application.models import QueueStatus
+from conversor_folhas.application.models import QueueStatus, queue_status_from_engine
 from conversor_folhas.application.queue_manager import QueueManager
 
 
@@ -46,3 +46,12 @@ def test_pending_requests_include_only_waiting_items(tmp_path: Path) -> None:
     assert len(requests) == 1
     assert requests[0].source_path == second.resolve()
 
+
+def test_engine_results_have_distinct_queue_states() -> None:
+    assert queue_status_from_engine("APROVADO") == QueueStatus.SUCCEEDED
+    assert queue_status_from_engine("APROVADO COM AVISOS") == QueueStatus.WARNING
+    assert (
+        queue_status_from_engine("APROVADO COM DIVERGÊNCIAS")
+        == QueueStatus.DIVERGENCE
+    )
+    assert queue_status_from_engine("ERRO") == QueueStatus.FAILED

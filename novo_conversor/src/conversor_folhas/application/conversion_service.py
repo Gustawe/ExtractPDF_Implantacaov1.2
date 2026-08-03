@@ -7,14 +7,24 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
+from folha_pdf_xlsx.models import ConversionDetails
+
 from .models import ConversionResult, HistoryEntry
 
 
 LOGGER = logging.getLogger(__name__)
 
 
+class ConversionFailedError(RuntimeError):
+    def __init__(self, message: str, details: ConversionDetails) -> None:
+        super().__init__(message)
+        self.details = details
+
+
 class EnginePort(Protocol):
-    def convert(self, source_path: Path, output_path: Path) -> tuple[str, str]: ...
+    def convert(
+        self, source_path: Path, output_path: Path
+    ) -> tuple[str, str, ConversionDetails] | tuple[str, str]: ...
 
 
 class HistoryPort(Protocol):
@@ -39,8 +49,19 @@ class ConversionService:
         temporary_output = source.parent / (
             f".{source.stem}.{uuid4().hex}.temporario.xlsx"
         )
+        details = ConversionDetails()
         try:
-            engine_status, message = self._engine.convert(source, temporary_output)
+            engine_result = self._engine.convert(source, temporary_output)
+            if len(engine_result) == 2:
+                engine_status, message = engine_result
+                details = ConversionDetails()
+            else:
+                engine_status, message, details = engine_result
+            if engine_status in {"ERRO", "REPROVADO"}:
+                raise ConversionFailedError(
+                    message or "O motor classificou o resultado como inválido.",
+                    details,
+                )
             if not temporary_output.is_file() or temporary_output.stat().st_size == 0:
                 raise RuntimeError("O motor não gerou um XLSX válido.")
             final_output = self._publish_without_overwrite(source, temporary_output)
@@ -49,6 +70,7 @@ class ConversionService:
                 output_path=final_output,
                 engine_status=engine_status,
                 message=message,
+                details=details,
             )
             self._record_history(
                 HistoryEntry(
@@ -57,6 +79,7 @@ class ConversionService:
                     status=engine_status,
                     message=message,
                     completed_at=datetime.now().astimezone(),
+                    details=details,
                 )
             )
             return result
@@ -69,6 +92,7 @@ class ConversionService:
                     status="ERRO",
                     message=f"{type(error).__name__}: {error}",
                     completed_at=datetime.now().astimezone(),
+                    details=details,
                 )
             )
             raise

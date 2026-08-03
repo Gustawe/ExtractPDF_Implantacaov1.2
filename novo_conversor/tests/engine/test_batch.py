@@ -27,10 +27,10 @@ class BatchTests(TestCase):
             workbook = load_workbook(generated, data_only=True)
             self.assertEqual(
                 workbook["Processamento"]["N2"].value,
-                "REPROVADO",
+                "ERRO",
             )
             self.assertEqual(
-                workbook["Pendencias"]["C2"].value,
+                workbook["Ocorrências"]["B2"].value,
                 "FALHA_PROCESSAMENTO",
             )
             workbook.close()

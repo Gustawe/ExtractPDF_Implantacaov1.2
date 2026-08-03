@@ -84,6 +84,7 @@ class QueueManager:
         removable = {
             QueueStatus.SUCCEEDED,
             QueueStatus.WARNING,
+            QueueStatus.DIVERGENCE,
             QueueStatus.FAILED,
         }
         rows = [

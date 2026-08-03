@@ -29,10 +29,12 @@ from conversor_folhas.infrastructure.history_repository import (
     SQLiteHistoryRepository,
 )
 from conversor_folhas.infrastructure.windows_shell import open_file, open_folder
+from folha_pdf_xlsx.models import ConversionDetails
 
 from .conversion_worker import BatchConversionWorker
 from .history_dialog import HistoryDialog
 from .queue_table_model import QueueTableModel
+from .result_details_dialog import ResultDetailsDialog
 from .theme import apply_theme
 
 
@@ -53,6 +55,7 @@ class MainWindow(QMainWindow):
         self._worker: BatchConversionWorker | None = None
         self._failure_count = 0
         self._warning_count = 0
+        self._divergence_count = 0
         self._history_repository = history_repository
 
         self._queue_manager = QueueManager()
@@ -268,6 +271,7 @@ class MainWindow(QMainWindow):
         self._conversion_running = True
         self._failure_count = 0
         self._warning_count = 0
+        self._divergence_count = 0
         self._progress_bar.setValue(0)
         self._progress_label.setText(f"0 de {len(requests)} concluídos")
         self._set_message("Conversão iniciada.")
@@ -294,21 +298,36 @@ class MainWindow(QMainWindow):
         self,
         identifier: str,
         output_path: str,
-        warning: bool,
+        engine_status: str,
         message: str,
+        details: object,
     ) -> None:
+        structured_details = (
+            details if isinstance(details, ConversionDetails) else ConversionDetails()
+        )
         self._queue_model.set_succeeded(
             identifier,
             output_path,
-            warning,
+            engine_status,
             message,
+            structured_details,
         )
-        if warning:
+        item = self._queue_manager.find(identifier)
+        if item is not None and item.status == QueueStatus.FAILED:
+            self._failure_count += 1
+        elif item is not None and item.status == QueueStatus.DIVERGENCE:
+            self._divergence_count += 1
+        elif item is not None and item.status == QueueStatus.WARNING:
             self._warning_count += 1
 
-    def _on_item_failed(self, identifier: str, message: str) -> None:
+    def _on_item_failed(
+        self, identifier: str, message: str, details: object
+    ) -> None:
         self._failure_count += 1
-        self._queue_model.set_failed(identifier, message)
+        structured_details = (
+            details if isinstance(details, ConversionDetails) else ConversionDetails()
+        )
+        self._queue_model.set_failed(identifier, message, structured_details)
 
     def _on_progress_changed(self, completed: int, total: int) -> None:
         percentage = round((completed / total) * 100) if total else 0
@@ -330,9 +349,15 @@ class MainWindow(QMainWindow):
                 f"Conversão finalizada com {self._failure_count} erro(s). "
                 "Selecione o arquivo e clique em Ver detalhes."
             )
+        elif self._divergence_count:
+            self._set_message(
+                f"Conversão finalizada com {self._divergence_count} arquivo(s) "
+                "contendo divergências."
+            )
         elif self._warning_count:
             self._set_message(
-                f"Conversão finalizada com {self._warning_count} alerta(s)."
+                f"Conversão finalizada com {self._warning_count} arquivo(s) "
+                "contendo avisos."
             )
         else:
             self._set_message("Conversão finalizada com sucesso.")
@@ -344,18 +369,19 @@ class MainWindow(QMainWindow):
             return
         if item.output_path is not None:
             self._open_selected_result()
-        elif item.message:
+        elif item.message or item.details.has_details:
             self._show_selected_details()
 
     def _show_selected_details(self) -> None:
         item = self._selected_item()
-        if item is None or not item.message:
+        if item is None or not (item.message or item.details.has_details):
             return
-        QMessageBox.information(
-            self,
-            f"Detalhes — {item.source_path.name}",
+        ResultDetailsDialog(
+            item.source_path.name,
+            item.details,
             item.message,
-        )
+            self,
+        ).exec()
 
     def _open_selected_result(self) -> None:
         item = self._selected_item()
@@ -390,7 +416,12 @@ class MainWindow(QMainWindow):
         has_pending = bool(self._queue_manager.pending_requests())
         has_finished = any(
             item.status
-            in {QueueStatus.SUCCEEDED, QueueStatus.WARNING, QueueStatus.FAILED}
+            in {
+                QueueStatus.SUCCEEDED,
+                QueueStatus.WARNING,
+                QueueStatus.DIVERGENCE,
+                QueueStatus.FAILED,
+            }
             for item in self._queue_manager.items
         )
 
@@ -404,7 +435,8 @@ class MainWindow(QMainWindow):
             selected is not None and selected.output_path is not None
         )
         self._details_button.setEnabled(
-            selected is not None and bool(selected.message)
+            selected is not None
+            and bool(selected.message or selected.details.has_details)
         )
         self._open_folder_button.setEnabled(selected is not None)
         self._convert_button.setEnabled(has_pending and not self._conversion_running)

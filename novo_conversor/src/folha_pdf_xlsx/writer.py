@@ -11,7 +11,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-from .models import PayrollDocument
+from .audit_writer import write_audit_sheets
+from .models import ConversionDetails, PayrollDocument
 
 
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
@@ -42,9 +43,8 @@ def write_workbook(
     _write_departments(workbook, docs)
     _write_rubrics(workbook, docs)
     _write_fiscal(workbook, docs)
-    _write_issues(workbook, docs)
     _write_processing(workbook, docs)
-    _write_validations(workbook, docs)
+    write_audit_sheets(workbook, _combined_details(docs))
 
     workbook.save(output)
     _verify_saved_workbook(output)
@@ -88,8 +88,10 @@ def _write_employees(workbook: Workbook, documents: list[PayrollDocument]) -> No
         "Observações",
     ]
     rows: list[list[Any]] = []
+    row_by_employee: dict[tuple[str, str], int] = {}
     for document in documents:
         for employee in document.employees:
+            row_by_employee[(employee.source_file, employee.employee_key)] = len(rows) + 2
             rows.append(
                 [
                     employee.source_file,
@@ -128,6 +130,17 @@ def _write_employees(workbook: Workbook, documents: list[PayrollDocument]) -> No
                 ]
             )
     sheet = _create_table_sheet(workbook, "Funcionarios", headers, rows, "FuncionariosTbl")
+    target_columns = {
+        "Soma de proventos": "W",
+        "Soma de descontos": "X",
+        "Cálculo do líquido": "AA",
+    }
+    for document in documents:
+        for check in document.validations:
+            row = row_by_employee.get((check.source_file, check.record_key))
+            column = target_columns.get(check.check)
+            if row and column:
+                check.target_cell = f"Funcionarios!{column}{row}"
     _format_columns(sheet, money_columns=range(20, 21), date_columns=(11,))
     _format_columns(sheet, money_columns=range(23, 33))
     sheet.column_dimensions["H"].width = 34
@@ -275,43 +288,6 @@ def _write_fiscal(workbook: Workbook, documents: list[PayrollDocument]) -> None:
     sheet.column_dimensions["G"].width = 80
 
 
-def _write_issues(workbook: Workbook, documents: list[PayrollDocument]) -> None:
-    headers = [
-        "Arquivo",
-        "Severidade",
-        "Código",
-        "Mensagem",
-        "Página",
-        "Chave Funcionário",
-        "Linha Original",
-    ]
-    rows = [
-        [
-            issue.source_file,
-            issue.severity,
-            issue.code,
-            issue.message,
-            issue.page,
-            issue.employee_key,
-            issue.raw_text,
-        ]
-        for document in documents
-        for issue in document.issues
-    ]
-    sheet = _create_table_sheet(workbook, "Pendencias", headers, rows, "PendenciasTbl")
-    sheet.column_dimensions["D"].width = 60
-    sheet.column_dimensions["G"].width = 80
-    if sheet.max_row >= 2:
-        sheet.conditional_formatting.add(
-            f"B2:B{sheet.max_row}",
-            FormulaRule(formula=['B2="ERRO"'], fill=ERROR_FILL),
-        )
-        sheet.conditional_formatting.add(
-            f"B2:B{sheet.max_row}",
-            FormulaRule(formula=['B2="AVISO"'], fill=WARNING_FILL),
-        )
-
-
 def _write_processing(workbook: Workbook, documents: list[PayrollDocument]) -> None:
     headers = [
         "Arquivo",
@@ -325,8 +301,8 @@ def _write_processing(workbook: Workbook, documents: list[PayrollDocument]) -> N
         "Verbas",
         "Rubricas",
         "Registros Fiscais",
-        "Validações com Falha",
-        "Pendências",
+        "Divergências",
+        "Ocorrências",
         "Status",
         "Processado em",
     ]
@@ -347,7 +323,11 @@ def _write_processing(workbook: Workbook, documents: list[PayrollDocument]) -> N
                 len(document.events),
                 len(document.rubrics),
                 len(document.fiscal_records),
-                sum(1 for item in document.validations if item.status == "FALHA"),
+                sum(
+                    1
+                    for item in document.validations
+                    if item.status in {"DIVERGÊNCIA", "FALHA"}
+                ),
                 len(document.issues),
                 document.status,
                 document.processed_at,
@@ -362,7 +342,11 @@ def _write_processing(workbook: Workbook, documents: list[PayrollDocument]) -> N
     if sheet.max_row >= 2:
         sheet.conditional_formatting.add(
             f"N2:N{sheet.max_row}",
-            FormulaRule(formula=['N2="REPROVADO"'], fill=ERROR_FILL),
+            FormulaRule(formula=['N2="ERRO"'], fill=ERROR_FILL),
+        )
+        sheet.conditional_formatting.add(
+            f"N2:N{sheet.max_row}",
+            FormulaRule(formula=['N2="APROVADO COM DIVERGÊNCIAS"'], fill=WARNING_FILL),
         )
         sheet.conditional_formatting.add(
             f"N2:N{sheet.max_row}",
@@ -370,43 +354,13 @@ def _write_processing(workbook: Workbook, documents: list[PayrollDocument]) -> N
         )
 
 
-def _write_validations(workbook: Workbook, documents: list[PayrollDocument]) -> None:
-    headers = [
-        "Arquivo",
-        "Escopo",
-        "Chave",
-        "Validação",
-        "Esperado",
-        "Encontrado",
-        "Diferença",
-        "Status",
-        "Mensagem",
-    ]
-    rows = [
-        [
-            check.source_file,
-            check.scope,
-            check.record_key,
-            check.check,
-            check.expected,
-            check.actual,
-            check.difference,
-            check.status,
-            check.message,
-        ]
-        for document in documents
-        for check in document.validations
-    ]
-    sheet = _create_table_sheet(
-        workbook, "Validacoes", headers, rows, "ValidacoesTbl"
+def _combined_details(documents: list[PayrollDocument]) -> ConversionDetails:
+    return ConversionDetails(
+        validations=[
+            check for document in documents for check in document.validations
+        ],
+        issues=[issue for document in documents for issue in document.issues],
     )
-    _format_columns(sheet, money_columns=(5, 6, 7))
-    sheet.column_dimensions["D"].width = 32
-    if sheet.max_row >= 2:
-        sheet.conditional_formatting.add(
-            f"H2:H{sheet.max_row}",
-            FormulaRule(formula=['H2="FALHA"'], fill=ERROR_FILL),
-        )
 
 
 def _create_table_sheet(
@@ -500,9 +454,7 @@ def _verify_saved_workbook(path: Path) -> None:
         "Resumo_Departamentos",
         "Resumo_Rubricas",
         "Resumo_Fiscal",
-        "Pendencias",
         "Processamento",
-        "Validacoes",
     }
     missing = required_sheets - set(workbook.sheetnames)
     if missing:

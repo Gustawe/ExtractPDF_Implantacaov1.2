@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -7,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from conversor_folhas.application.models import HistoryEntry, HistoryRecord
+from folha_pdf_xlsx.models import ConversionDetails
 
 
 class SQLiteHistoryRepository:
@@ -31,10 +33,21 @@ class SQLiteHistoryRepository:
                     output_path TEXT,
                     status TEXT NOT NULL,
                     message TEXT NOT NULL DEFAULT '',
+                    details_json TEXT,
                     completed_at TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(conversion_history)"
+                ).fetchall()
+            }
+            if "details_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE conversion_history ADD COLUMN details_json TEXT"
+                )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_conversion_history_completed
@@ -51,14 +64,20 @@ class SQLiteHistoryRepository:
                     output_path,
                     status,
                     message,
+                    details_json,
                     completed_at
-                ) VALUES (?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(entry.source_path),
                     str(entry.output_path) if entry.output_path else None,
                     entry.status,
                     entry.message,
+                    json.dumps(
+                        entry.details.to_dict(),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                     entry.completed_at.isoformat(),
                 ),
             )
@@ -68,7 +87,8 @@ class SQLiteHistoryRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, source_path, output_path, status, message, completed_at
+                SELECT id, source_path, output_path, status, message,
+                       details_json, completed_at
                 FROM conversion_history
                 ORDER BY id DESC
                 LIMIT ?
@@ -97,6 +117,15 @@ class SQLiteHistoryRepository:
     @staticmethod
     def _row_to_record(row: sqlite3.Row) -> HistoryRecord:
         output_value = row["output_path"]
+        details = ConversionDetails()
+        details_json = row["details_json"]
+        if details_json:
+            try:
+                loaded = json.loads(str(details_json))
+                if isinstance(loaded, dict):
+                    details = ConversionDetails.from_dict(loaded)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                details = ConversionDetails()
         return HistoryRecord(
             identifier=int(row["id"]),
             source_path=Path(row["source_path"]),
@@ -104,4 +133,5 @@ class SQLiteHistoryRepository:
             status=str(row["status"]),
             message=str(row["message"]),
             completed_at=datetime.fromisoformat(row["completed_at"]),
+            details=details,
         )

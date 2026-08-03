@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -32,6 +33,15 @@ from .parsing import (
 LOGGER = logging.getLogger(__name__)
 LAYOUT_PROFILE = "extrato_mensal_v1"
 LINE_TOLERANCE = 2.1
+
+
+def _normalized_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    return "".join(
+        character
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
 
 
 @dataclass(slots=True)
@@ -104,9 +114,7 @@ class PayrollPdfExtractor:
                     self._parse_rubrics(path.name, page_11_index + 1, summary_lines)
                 )
 
-            fiscal_page_index = self._find_page_with(
-                lines_by_page, "Apuração Tributos Federais"
-            )
+            fiscal_page_index = self._find_fiscal_page(lines_by_page)
             if fiscal_page_index is not None:
                 document.fiscal_records.extend(
                     self._parse_fiscal_records(
@@ -171,6 +179,24 @@ class PayrollPdfExtractor:
         normalized = search_text.casefold()
         for index, lines in enumerate(lines_by_page):
             if any(normalized in line.text.casefold() for line in lines):
+                return index
+        return None
+
+    @staticmethod
+    def _find_fiscal_page(lines_by_page: list[list[PdfLine]]) -> int | None:
+        """Localiza resumos fiscais completos, mesmo sem a seção de apuração."""
+
+        required_markers = (
+            "inss",
+            "fgts, pis e iss",
+            "irrf conforme competencia do calculo",
+            "situacoes",
+        )
+        for index, lines in enumerate(lines_by_page):
+            page_text = _normalized_text("\n".join(line.text for line in lines))
+            if "apuracao tributos federais" in page_text:
+                return index
+            if sum(marker in page_text for marker in required_markers) >= 3:
                 return index
         return None
 
@@ -354,11 +380,11 @@ class PayrollPdfExtractor:
         kind: str,
     ) -> PayrollEvent | None:
         if kind == "P":
-            code_words = line.between(25, 51)
-            description_words = line.between(51, 190)
+            code_words = line.between(25, 50)
+            description_words = line.between(50, 190)
             reference_words = line.between(190, 250)
-            value_words = line.between(250, 284)
-            type_words = line.between(284, 300)
+            value_words = line.between(245, 275)
+            type_words = line.between(275, 300)
         else:
             code_words = line.between(300, 329)
             description_words = line.between(329, 470)

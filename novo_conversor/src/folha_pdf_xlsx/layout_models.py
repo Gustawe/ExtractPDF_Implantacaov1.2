@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .models import ConversionDetails, ProcessingIssue, ValidationCheck
+
 
 @dataclass(frozen=True, slots=True)
 class LayoutWord:
@@ -47,8 +49,14 @@ class PayrollLayoutDocument:
     source_path: Path
     page_count: int
     sections: list[PayrollLayoutSection] = field(default_factory=list)
+    validations: list[ValidationCheck] = field(default_factory=list)
+    issues: list[ProcessingIssue] = field(default_factory=list)
 
     @property
     def employee_count(self) -> int:
         return sum(len(section.employee_blocks) for section in self.sections)
+
+    @property
+    def details(self) -> ConversionDetails:
+        return ConversionDetails(self.validations, self.issues)
 
