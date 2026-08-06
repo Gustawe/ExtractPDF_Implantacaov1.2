@@ -135,13 +135,15 @@ class ResultDetailsDialog(QDialog):
                 str(check.page) if check.page is not None else "—",
                 check.message,
             )
-            color = _status_color(check.status)
+            colors = _status_colors(check.status)
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.UserRole, check.status)
                 item.setData(Qt.UserRole + 1, " ".join(values).casefold())
-                if color is not None:
-                    item.setBackground(color)
+                if colors is not None:
+                    background, foreground = colors
+                    item.setBackground(background)
+                    item.setForeground(foreground)
                 self._validations_table.setItem(row, column, item)
             validation_statuses.add(check.status)
 
@@ -156,12 +158,13 @@ class ResultDetailsDialog(QDialog):
                 str(issue.page) if issue.page is not None else "—",
                 issue.message,
             )
-            color = QColor("#f4cccc") if issue.severity == "ERRO" else QColor("#fff2cc")
+            background, foreground = _issue_colors(issue.severity)
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.UserRole, issue.severity)
                 item.setData(Qt.UserRole + 1, " ".join(values).casefold())
-                item.setBackground(color)
+                item.setBackground(background)
+                item.setForeground(foreground)
                 self._issues_table.setItem(row, column, item)
             severities.add(issue.severity)
 
@@ -198,11 +201,17 @@ def _format_value(value) -> str:
     return str(value)
 
 
-def _status_color(status: str) -> QColor | None:
+def _status_colors(status: str) -> tuple[QColor, QColor] | None:
+    foreground = QColor("#202124")
     if status in {"DIVERGÊNCIA", "FALHA"}:
-        return QColor("#fff2cc")
+        return QColor("#fff2cc"), foreground
     if status == "AVISO":
-        return QColor("#fce4d6")
+        return QColor("#fce4d6"), foreground
     if status == "NÃO APLICÁVEL":
-        return QColor("#e7e6e6")
+        return QColor("#e7e6e6"), foreground
     return None
+
+
+def _issue_colors(severity: str) -> tuple[QColor, QColor]:
+    background = QColor("#f4cccc") if severity == "ERRO" else QColor("#fff2cc")
+    return background, QColor("#202124")

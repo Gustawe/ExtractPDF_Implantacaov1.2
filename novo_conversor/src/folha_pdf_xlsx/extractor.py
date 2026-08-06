@@ -116,13 +116,25 @@ class PayrollPdfExtractor:
 
             fiscal_page_index = self._find_fiscal_page(lines_by_page)
             if fiscal_page_index is not None:
-                document.fiscal_records.extend(
-                    self._parse_fiscal_records(
-                        path.name,
-                        fiscal_page_index + 1,
-                        lines_by_page[fiscal_page_index],
-                    )
+                fiscal_records = self._parse_fiscal_records(
+                    path.name,
+                    fiscal_page_index + 1,
+                    lines_by_page[fiscal_page_index],
                 )
+                document.fiscal_records.extend(fiscal_records)
+                if not fiscal_records:
+                    document.issues.append(
+                        ProcessingIssue(
+                            source_file=path.name,
+                            page=fiscal_page_index + 1,
+                            severity="AVISO",
+                            code="RESUMO_FISCAL_NAO_RECONHECIDO",
+                            message=(
+                                "A página de resumo fiscal foi encontrada, mas suas "
+                                "linhas não puderam ser interpretadas."
+                            ),
+                        )
+                    )
             else:
                 document.issues.append(
                     ProcessingIssue(
@@ -186,17 +198,30 @@ class PayrollPdfExtractor:
     def _find_fiscal_page(lines_by_page: list[list[PdfLine]]) -> int | None:
         """Localiza resumos fiscais completos, mesmo sem a seção de apuração."""
 
-        required_markers = (
+        legacy_markers = (
             "inss",
             "fgts, pis e iss",
             "irrf conforme competencia do calculo",
             "situacoes",
         )
+        compact_markers = (
+            "base irrf",
+            "total inss",
+            "base do fgts",
+            "valor do fgts",
+        )
         for index, lines in enumerate(lines_by_page):
             page_text = _normalized_text("\n".join(line.text for line in lines))
             if "apuracao tributos federais" in page_text:
                 return index
-            if sum(marker in page_text for marker in required_markers) >= 3:
+            if sum(marker in page_text for marker in legacy_markers) >= 3:
+                return index
+            is_compact_summary = (
+                "resumo das bases" in page_text
+                and "situacoes" in page_text
+                and sum(marker in page_text for marker in compact_markers) >= 2
+            )
+            if is_compact_summary:
                 return index
         return None
 
@@ -292,11 +317,9 @@ class PayrollPdfExtractor:
         header, employment, job = block[0:3]
         record_type = "CONTRIBUINTE" if header.text.startswith("Contr:") else "EMPREGADO"
 
-        identity_words = header.between(60, 250)
-        identity_text = clean_label_artifacts(words_text(identity_words))
-        identity_parts = identity_text.split()
-        registration = identity_parts[0] if identity_parts else ""
-        name = " ".join(identity_parts[1:]).strip()
+        registration, name, status, cpf, admission_text = (
+            self._parse_employee_header(header)
+        )
 
         employee_key = (
             f"{source_file}|{page_number}|{record_type}|{registration}|{block_sequence}"
@@ -308,9 +331,9 @@ class PayrollPdfExtractor:
             record_type=record_type,
             registration=registration,
             name=name,
-            status=clean_label_artifacts(words_text(header.between(250, 365))),
-            cpf=clean_label_artifacts(words_text(header.between(380, 478))),
-            admission_date=parse_br_date(words_text(header.after(520))),
+            status=status,
+            cpf=cpf,
+            admission_date=parse_br_date(admission_text),
             employment_type=words_text(employment.between(60, 230)),
             cost_center=words_text(employment.between(250, 350)),
             department=words_text(employment.between(380, 455)),
@@ -371,6 +394,63 @@ class PayrollPdfExtractor:
         return employee
 
     @staticmethod
+    def _parse_employee_header(
+        header: PdfLine,
+    ) -> tuple[str, str, str, str, str]:
+        """Separa campos rotulados, inclusive quando o PDF une vários tokens."""
+
+        header_text = " ".join(header.text.split())
+        match = re.match(
+            r"^(?:Empr\.\s*:|Contr\s*:)\s*"
+            r"(?P<identity>.*?)\s*"
+            r"(?:Situa(?:ção|cao)|"
+            r"S(?P<overlap>[A-ZÁÉÍÓÚÃÕÇ])itua(?:ção|cao))\s*:"
+            r"\s*(?P<status>.*?)\s*"
+            r"CPF\s*:\s*(?P<cpf>.*?)\s*"
+            r"Adm\s*:\s*(?P<admission>.*)$",
+            header_text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            identity = match.group("identity") + (match.group("overlap") or "")
+            registration, name = PayrollPdfExtractor._split_registration_name(
+                identity
+            )
+            return (
+                registration,
+                name,
+                " ".join(match.group("status").split()),
+                " ".join(match.group("cpf").split()),
+                " ".join(match.group("admission").split()),
+            )
+
+        identity_text = clean_label_artifacts(words_text(header.between(60, 250)))
+        registration, name = PayrollPdfExtractor._split_registration_name(
+            identity_text
+        )
+        return (
+            registration,
+            name,
+            clean_label_artifacts(words_text(header.between(250, 365))),
+            clean_label_artifacts(words_text(header.between(380, 478))),
+            words_text(header.after(520)),
+        )
+
+    @staticmethod
+    def _split_registration_name(identity: str) -> tuple[str, str]:
+        normalized = " ".join(identity.split()).strip()
+        numeric_match = re.match(r"^(?P<registration>\d+)\s*(?P<name>.*)$", normalized)
+        if numeric_match:
+            return (
+                numeric_match.group("registration"),
+                numeric_match.group("name").strip(),
+            )
+        parts = normalized.split(maxsplit=1)
+        if not parts:
+            return "", ""
+        return parts[0], parts[1].strip() if len(parts) > 1 else ""
+
+    @staticmethod
     def _parse_event_half(
         source_file: str,
         page_number: int,
@@ -388,9 +468,9 @@ class PayrollPdfExtractor:
         else:
             code_words = line.between(300, 329)
             description_words = line.between(329, 470)
-            reference_words = line.between(470, 529)
-            value_words = line.between(529, 562)
-            type_words = line.after(562)
+            reference_words = line.between(470, 520)
+            value_words = line.between(520, 556)
+            type_words = line.after(550)
 
         type_text = words_text(type_words).strip()
         if type_text != kind:
@@ -517,6 +597,14 @@ class PayrollPdfExtractor:
     def _parse_fiscal_records(
         self, source_file: str, page_number: int, lines: list[PdfLine]
     ) -> list[FiscalRecord]:
+        page_text = _normalized_text("\n".join(line.text for line in lines))
+        if "resumo das bases" in page_text:
+            return self._parse_compact_fiscal_records(
+                source_file,
+                page_number,
+                lines,
+            )
+
         records: list[FiscalRecord] = []
         section = ""
         heading_map = {
@@ -615,6 +703,100 @@ class PayrollPdfExtractor:
                     )
                 )
         return records
+
+    @classmethod
+    def _parse_compact_fiscal_records(
+        cls,
+        source_file: str,
+        page_number: int,
+        lines: list[PdfLine],
+    ) -> list[FiscalRecord]:
+        """Lê a variante compacta com Situações, INSS e bases lado a lado."""
+
+        heading = next(
+            (
+                line
+                for line in lines
+                if "resumo das bases" in _normalized_text(line.text)
+            ),
+            None,
+        )
+        if heading is None:
+            return []
+
+        columns = (
+            ("Situações", "CONTAGEM", 14.0, 190.0),
+            ("INSS / CONTRIBUIÇÕES", "BASES", 190.0, 410.0),
+            ("IRRF / FGTS / PIS / ISS", "BASES", 410.0, 590.0),
+        )
+        records: list[FiscalRecord] = []
+        for line in lines:
+            if line.top <= heading.top or line.top >= 800:
+                continue
+            normalized_line = _normalized_text(line.text)
+            if normalized_line == "situacoes":
+                continue
+            if "liquido geral" in normalized_line:
+                total = cls._parse_fiscal_column(
+                    source_file,
+                    page_number,
+                    "Resumo das Bases",
+                    "TOTAL",
+                    line,
+                    410.0,
+                    590.0,
+                )
+                if total is not None:
+                    records.append(total)
+                break
+            for section, subgroup, start, end in columns:
+                record = cls._parse_fiscal_column(
+                    source_file,
+                    page_number,
+                    section,
+                    subgroup,
+                    line,
+                    start,
+                    end,
+                )
+                if record is not None:
+                    records.append(record)
+        return records
+
+    @staticmethod
+    def _parse_fiscal_column(
+        source_file: str,
+        page_number: int,
+        section: str,
+        subgroup: str,
+        line: PdfLine,
+        start: float,
+        end: float,
+    ) -> FiscalRecord | None:
+        words = line.between(start, end)
+        numeric_words = [
+            word for word in words if parse_br_number(str(word["text"])) is not None
+        ]
+        if not numeric_words:
+            return None
+        value_word = numeric_words[-1]
+        label = words_text(
+            word
+            for word in words
+            if float(word["x0"]) < float(value_word["x0"])
+        ).strip()
+        value = parse_br_number(str(value_word["text"]))
+        if not label or value is None:
+            return None
+        return FiscalRecord(
+            source_file=source_file,
+            page=page_number,
+            section=section,
+            subgroup=subgroup,
+            item=label,
+            value=value,
+            raw_text=line.text,
+        )
 
     @staticmethod
     def _parse_two_column_fiscal_line(

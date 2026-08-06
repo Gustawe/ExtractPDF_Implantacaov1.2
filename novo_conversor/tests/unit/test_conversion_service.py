@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,60 @@ def test_existing_outputs_receive_sequential_names(tmp_path: Path) -> None:
     assert result.output_path == tmp_path / "folha (2).xlsx"
     assert (tmp_path / "folha.xlsx").read_bytes() == b"existente"
     assert (tmp_path / "folha (1).xlsx").read_bytes() == b"existente"
+
+
+def test_permission_error_is_treated_as_collision_when_candidate_exists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pdf = tmp_path / "folha.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    real_rename = os.rename
+    calls: list[Path] = []
+
+    def rename_with_smb_collision(source, destination) -> None:
+        candidate = Path(destination)
+        calls.append(candidate)
+        if len(calls) == 1:
+            candidate.write_bytes(b"arquivo-concorrente")
+            raise PermissionError(5, "Acesso negado", str(candidate))
+        real_rename(source, destination)
+
+    monkeypatch.setattr(
+        "conversor_folhas.application.conversion_service.os.rename",
+        rename_with_smb_collision,
+    )
+
+    result = ConversionService(SuccessfulEngine()).convert(pdf)
+
+    assert result.output_path == tmp_path / "folha (1).xlsx"
+    assert (tmp_path / "folha.xlsx").read_bytes() == b"arquivo-concorrente"
+    assert result.output_path.read_bytes() == b"xlsx-gerado"
+
+
+def test_permission_error_without_existing_candidate_has_actionable_message(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pdf = tmp_path / "folha.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    def deny_rename(_source, destination) -> None:
+        raise PermissionError(5, "Acesso negado", str(destination))
+
+    monkeypatch.setattr(
+        "conversor_folhas.application.conversion_service.os.rename",
+        deny_rename,
+    )
+
+    with pytest.raises(
+        PermissionError,
+        match="permissões NTFS e do compartilhamento",
+    ):
+        ConversionService(SuccessfulEngine()).convert(pdf)
+
+    assert not (tmp_path / "folha.xlsx").exists()
+    assert not list(tmp_path.glob(".*.temporario.xlsx"))
 
 
 def test_temporary_file_is_removed_after_engine_failure(tmp_path: Path) -> None:

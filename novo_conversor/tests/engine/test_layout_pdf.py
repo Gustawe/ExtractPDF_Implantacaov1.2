@@ -85,8 +85,8 @@ class StructuredPayrollVisualWriterTests(unittest.TestCase):
             job_title="ANALISTA",
             salary=Decimal("4400.00"),
             total_earnings=Decimal("4500.00"),
-            total_discounts=Decimal("500.00"),
-            net_amount=Decimal("4000.00"),
+            total_discounts=Decimal("740.00"),
+            net_amount=Decimal("3760.00"),
             inss_base=Decimal("4500.00"),
             fgts_base=Decimal("4500.00"),
             fgts_value=Decimal("360.00"),
@@ -115,6 +115,17 @@ class StructuredPayrollVisualWriterTests(unittest.TestCase):
                 value=Decimal("500.00"),
                 kind="D",
             ),
+            PayrollEvent(
+                source_file="folha.pdf",
+                page=1,
+                employee_key=employee.employee_key,
+                registration="71",
+                code="48",
+                description="VALE TRANSPORTE",
+                reference="6,00",
+                value=Decimal("240.00"),
+                kind="D",
+            ),
         ]
         document = PayrollDocument(
             source_path=Path("folha.pdf"),
@@ -137,8 +148,15 @@ class StructuredPayrollVisualWriterTests(unittest.TestCase):
             self.assertEqual(sheet["A1"].value, "Folha de Pagamento — 01/01/2025 a 31/01/2025")
             self.assertEqual(sheet["A6"].value, "Cód:")
             self.assertEqual(sheet["B6"].value, 71)
+            self.assertEqual(sheet["E6"].value, "Pessoa de Teste")
+            self.assertEqual(sheet["D7"].value, "Situação:")
+            self.assertEqual(sheet["E7"].value, "Trabalhando")
             self.assertEqual(sheet["G8"].value, 4500)
+            self.assertEqual(sheet["H8"].value, 11)
             self.assertEqual(sheet["M8"].value, 500)
+            self.assertIsNone(sheet["B9"].value)
+            self.assertEqual(sheet["H9"].value, 48)
+            self.assertEqual(sheet["M9"].value, 240)
             self.assertEqual(
                 sum(1 for row in sheet.iter_rows() if row[0].value == "Cód:"),
                 1,

@@ -13,6 +13,7 @@ from .models import ConversionResult, HistoryEntry
 
 
 LOGGER = logging.getLogger(__name__)
+MAX_PUBLICATION_ATTEMPTS = 1000
 
 
 class ConversionFailedError(RuntimeError):
@@ -112,16 +113,38 @@ class ConversionService:
         source: Path,
         temporary_output: Path,
     ) -> Path:
-        sequence = 0
-        while True:
+        for sequence in range(MAX_PUBLICATION_ATTEMPTS):
             candidate = cls._output_candidate(source, sequence)
+            if candidate.exists():
+                continue
             try:
                 # No Windows, os.rename falha se o destino já existir. Isso evita
                 # substituir silenciosamente uma planilha criada por outro processo.
                 os.rename(temporary_output, candidate)
                 return candidate
             except FileExistsError:
-                sequence += 1
+                continue
+            except PermissionError as error:
+                # Alguns servidores SMB informam colisões como WinError 5. Só é
+                # seguro tentar outro nome quando o destino realmente apareceu.
+                if candidate.exists():
+                    continue
+                message = (
+                    f"Não foi possível publicar o XLSX em '{candidate.parent}'. "
+                    "O destino não existe, portanto a falha não foi tratada como "
+                    "colisão. Verifique se o arquivo está bloqueado, as permissões "
+                    "NTFS e do compartilhamento (criar, renomear e excluir) e as "
+                    "políticas de segurança do servidor SMB."
+                )
+                raise PermissionError(
+                    error.errno or 13,
+                    message,
+                    str(candidate),
+                ) from error
+        raise RuntimeError(
+            "Não foi possível escolher um nome livre para o XLSX após "
+            f"{MAX_PUBLICATION_ATTEMPTS} tentativas."
+        )
 
     @staticmethod
     def _output_candidate(source: Path, sequence: int) -> Path:
